@@ -231,13 +231,17 @@ def main():
                 for u in sorted(packages[kk]):
                     print k+':'+u
         else:
+            prevname=None
             for k in sources:
                 new=''
                 kk=sources.index(k)
                 if len(packages[kk])>0:
-                    print ','+("-" * (cols-2))+'.'
-                    print '|'+naming[k].center(cols-2)+'|'
-                    print '`'+("-" * (cols-2))+'\''
+                    # if two consecutive sections have the same name, do not display it twice
+                    if prevname != naming[k]:
+                        print ','+("-" * (cols-2))+'.'
+                        print '|'+naming[k].center(cols-2)+'|'
+                        print '`'+("-" * (cols-2))+'\''
+                        prevname=naming[k]
                 if len(packages[kk])<=xlimit:
                     for u in sorted(packages[kk]):
                         if len(new)+len(u)+1<=cols:
