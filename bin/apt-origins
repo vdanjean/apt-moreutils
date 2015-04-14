@@ -7,6 +7,8 @@ import apt.progress.text
 import os
 import re
 import types
+import xdg.BaseDirectory
+import shutil
 progusage="apt-origins [options]"
 shortoptions=["h","l","c","m","t","C:","L:","o:"]
 longoptions=["help", "list","count","manual","tabular","columns=","lines=","order=","help-nroff"]
@@ -51,6 +53,23 @@ def usagenroff():
         print x
         print explanation[k]
 
+def fix_config_file_location():
+    base_path=xdg.BaseDirectory.load_first_config('apt-origins')
+    if base_path == None:
+        try:
+            home=os.getenv('HOME',default='.')
+            orig=os.path.join(home, '.apt-origins')
+            if not os.path.isfile(orig):
+                return
+            savedir=xdg.BaseDirectory.save_config_path('apt-origins')
+            new=os.path.join(savedir, 'config')
+            print("Old configuration file detected without new one. Moving the old one to the new location")
+            print("Old configuration file location: %s" % orig)
+            print("New configuration file location: %s" % new)
+            shutil.move(orig, new)
+        except IOError:
+            True
+
 def main():
     """The main function"""
     apt_pkg.init_config()
@@ -69,20 +88,23 @@ def main():
     xlimit=100
     cols=80
     environfile=False
-    home=os.getenv('HOME',default='.')
-    try:
-        f=open(home+'/.apt-origins','r')
-        environfile=True
-        for line in f:
-            if len(line)>1 and line[0] != '#':
-                s=line.rstrip('\n')
-                x=s.find('~')
-                if x!=-1:
-                    xsources.append(s)
-                    defsources[s[0:x]]=s
-        f.close()
-    except IOError:
-        True
+    fix_config_file_location()
+    for dirname in xdg.BaseDirectory.load_config_paths('apt-origins'):
+        try:
+             filename=os.path.join(dirname, 'config')
+             #print("Reading config from %s" % filename)
+             f=open(filename,'r')
+             environfile=True
+             for line in f:
+                if len(line)>1 and line[0] != '#':
+                    s=line.rstrip('\n')
+                    x=s.find('~')
+                    if x!=-1:
+                        xsources.append(s)
+                        defsources[s[0:x]]=s
+             f.close()
+        except IOError:
+            True
     for o,a in opts:
         if o in ("-h","--help"):
             usage()
