@@ -1,4 +1,4 @@
-.TH APT\-ORIGINS "1" "February 2010" "1\.7" "User Commands"
+.TH APT\-ORIGINS "1" "April 2015" "2\.2" "User Commands"
 .SH NAME
 apt\-origins \- display origin of installed packages
 .SH SYNOPSIS
@@ -48,8 +48,9 @@ Stanza format changed in version 1.7. Just append /a= to the end of your
 existing lines if you upgrade from 1.6.
 .SH FILES
 .TP
-\fB~/.apt\-origins\fR
- Ordered list of stanzas alias~site/archive/o=origin/l=label
+\fB<XDGDIR>/apt\-origins/stanzas.list\fR
+Ordered list of stanzas alias~site/archive/o=origin/l=label. By default, user
+configuration should be put in \fB$HOME/.config/apt\-origins/stanzas.list\fR.
 .SH AUTHOR
 Written by Jean\-Christophe Dubacq.
 .SH COPYRIGHT

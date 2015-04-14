@@ -62,7 +62,7 @@ def fix_config_file_location():
             if not os.path.isfile(orig):
                 return
             savedir=xdg.BaseDirectory.save_config_path('apt-origins')
-            new=os.path.join(savedir, 'config')
+            new=os.path.join(savedir, 'stanzas.list')
             print("Old configuration file detected without new one. Moving the old one to the new location")
             print("Old configuration file location: %s" % orig)
             print("New configuration file location: %s" % new)
@@ -91,7 +91,7 @@ def main():
     fix_config_file_location()
     for dirname in xdg.BaseDirectory.load_config_paths('apt-origins'):
         try:
-             filename=os.path.join(dirname, 'config')
+             filename=os.path.join(dirname, 'stanzas.list')
              #print("Reading config from %s" % filename)
              f=open(filename,'r')
              environfile=True
