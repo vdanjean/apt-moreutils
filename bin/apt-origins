@@ -1,28 +1,39 @@
 #!/usr/bin/python
 """Check the origin of all packages"""
 
-import getopt,sys
+import sys
+import argparse
 import apt_pkg
 import os
 import re
 import types
 import xdg.BaseDirectory
 import shutil
-progusage="apt-origins [options]"
-shortoptions=["h","l","c","m","t","C:","L:","o:"]
-longoptions=["help", "list","count","manual","tabular","columns=","lines=","order=","help-nroff"]
-argstype=['','','','','','integer','integer','string']
-explanation=['This help text',
-             'Just list available distributions',
-             'Just display package count by origin',
-             'Only display manually installed packages',
-             'Use tabular output format for origin display',
-             'Set the number of columns of the output',
-             'Set the maximal number of packages that can be displayed',
-             'Set the order in which packages are in the distributions.\n    This is a space-jointed string of stanzas like\n    alias1~site1/archive1/o=origin1/l=label1/a=arch1 where alias1 is the display name of\n    a distribution of name archive1 at site1, label1 and origin1 being the\n    values in the Release file. "none" will purge the preceding sources. Giving\n    only the alias will reselect the defined alias if none was given.\n    Regexp stanza for package names can be used instead of a mirror.\n    Simply use REName:pkgname.*$ for any package named beginning by pkgname).'
-             ]
 
-loglevel=2
+parser = argparse.ArgumentParser(description='Display origin of installed packages')
+parser.add_argument('-V', '--version', action='version', version='%(prog)s 2.2')
+parser.add_argument('-v', '--verbose', action='count',      default=0,
+    help='Increase verbosity')
+parser.add_argument('-q', '--quiet',   action='count',      default=0,
+    help='Decrease verbosity')
+parser.add_argument('-l', '--list',    action='store_true', default=False,
+    help='Just list available distributions')
+parser.add_argument('-c', '--count',   action='store_true', default=False,
+    help='Just display package count by origin')
+parser.add_argument('-m', '--manual',  action='store_true', default=False,
+    help='Only display manually installed packages')
+parser.add_argument('-t', '--tabular', action='store_true', default=False,
+    help='Use tabular output format for origin display')
+parser.add_argument('-C', '--columns', nargs=1, type=int,   default=80,
+    help='Set the number of columns of the output')
+parser.add_argument('-L', '--lines',   nargs=1, type=int,   default=100,
+    help='Set the maximal number of packages that can be displayed by origin')
+parser.add_argument('-o', '--order',   action='append',
+    help='Set the order in which packages are in the distributions.\n    This is a space-jointed string of stanzas like\n    alias1~site1/archive1/o=origin1/l=label1/a=arch1 where alias1 is the display name of\n    a distribution of name archive1 at site1, label1 and origin1 being the\n    values in the Release file. "none" will purge the preceding sources. Giving\n    only the alias will reselect the defined alias if none was given.\n    Regexp stanza for package names can be used instead of a mirror.\n    Simply use REName:pkgname.*$ for any package named beginning by pkgname).')
+
+args = parser.parse_args()
+
+loglevel=1+args.verbose-args.quiet
 
 def log(s, level=1):
     if level <= loglevel:
@@ -30,36 +41,6 @@ def log(s, level=1):
 
 def debug(s, level=2):
     log("D: "+s, level)
-
-def usage():
-    """Usage for this program."""
-    print progusage
-    for k in range(len(longoptions)):
-        if longoptions[k]=='help-nroff':
-            continue
-        if k<len(shortoptions):
-            x='-'+shortoptions[k][0:1]+'|--'+longoptions[k]
-            x=x+argstype[k]
-        else:
-            x='--'+longoptions[k]+argstype[k]
-        print "  %-20s %s" % (x,explanation[k])
-
-def usagenroff():
-    """Usage for this program in NROFF format."""
-    print progusage
-    print ".SH OPTIONS"
-    for k in range(len(longoptions)):
-        if longoptions[k]=='help-nroff':
-            continue
-        if k<len(shortoptions):
-            x='\\fB-'+shortoptions[k][0:1]+'\\fR|\\fB--'+longoptions[k]+'\\fR'
-        else:
-            x='\\fB--'+longoptions[k]+'\\fR'
-        if len(argstype[k])>0:
-            x=x+" \\fI"+argstype[k]+"\\fR"
-        print ".TP"
-        print x
-        print explanation[k]
 
 def fix_config_file_location():
     base_path=xdg.BaseDirectory.load_first_config('apt-origins')
@@ -184,12 +165,12 @@ class Sources:
 
 def main():
     """The main function"""
-    try:
-        opts, args = getopt.getopt(sys.argv[1:], "".join(shortoptions),
-                                   longoptions)
-    except getopt.GetoptError:
-        usage()
-        sys.exit(1)
+    #try:
+    #    opts, args = getopt.getopt(sys.argv[1:], "".join(shortoptions),
+    #                               longoptions)
+    #except getopt.GetoptError:
+    #    usage()
+    #    sys.exit(1)
     justlist=False
     justcount=False
     onlymanual=False
@@ -219,26 +200,15 @@ def main():
              f.close()
         except IOError:
             True
-    for o,a in opts:
-        if o in ("-h","--help"):
-            usage()
-            sys.exit()
-        elif o in ("--help-nroff"):
-            usagenroff()
-            sys.exit()
-        elif o in ("-l","--list"):
-            justlist=True
-        elif o in ("-c","--count"):
-            justcount=True
-        elif o in ("-t","--total"):
-            optiontabular=True
-        elif o in ("-m","--manual"):
-            onlymanual=True
-        elif o in ("-L","--lines"):
-            xlimit=int(a)
-        elif o in ("-C","--columns"):
-            cols=int(a)
-        elif o in ("-o","--order"):
+    
+    justlist=args.list
+    justcount=args.count
+    optiontabular=args.tabular
+    onlymanual=args.manual
+    xlimit=args.lines
+    cols=args.columns
+    if args.order:
+        for a in args.order:
             if (a=='none'):
                 xsources=[]
             else:
@@ -247,8 +217,7 @@ def main():
                     xsources += defsources[a]
                 else:
                     xsources.append(a)
-        else:
-            assert False, "unhandled option"
+
     apt_pkg.init_config()
     apt_pkg.init_system()
     cache=None
