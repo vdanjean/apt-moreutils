@@ -3,7 +3,6 @@
 
 import getopt,sys
 import apt_pkg
-import apt.progress.text
 import os
 import re
 import types
@@ -22,6 +21,15 @@ explanation=['This help text',
              'Set the maximal number of packages that can be displayed',
              'Set the order in which packages are in the distributions.\n    This is a space-jointed string of stanzas like\n    alias1~site1/archive1/o=origin1/l=label1/a=arch1 where alias1 is the display name of\n    a distribution of name archive1 at site1, label1 and origin1 being the\n    values in the Release file. "none" will purge the preceding sources. Giving\n    only the alias will reselect the defined alias if none was given.\n    Regexp stanza for package names can be used instead of a mirror.\n    Simply use REName:pkgname.*$ for any package named beginning by pkgname).'
              ]
+
+loglevel=2
+
+def log(s, level=1):
+    if level <= loglevel:
+        print s
+
+def debug(s, level=2):
+    log("D: "+s, level)
 
 def usage():
     """Usage for this program."""
@@ -63,16 +71,119 @@ def fix_config_file_location():
                 return
             savedir=xdg.BaseDirectory.save_config_path('apt-origins')
             new=os.path.join(savedir, 'stanzas.list')
-            print("Old configuration file detected without new one. Moving the old one to the new location")
-            print("Old configuration file location: %s" % orig)
-            print("New configuration file location: %s" % new)
+            log("Old configuration file detected without new one. Moving the old one to the new location")
+            log("Old configuration file location: %s" % orig)
+            log("New configuration file location: %s" % new)
             shutil.move(orig, new)
         except IOError:
             True
 
+class Sources:
+    PKG_UNKNOWN    = -1
+    PKG_UPGRADABLE = -2
+    PKG_DOWNGRADABLE    = -3
+
+    def __init__(self):
+        # Array of sources/names
+        self.sources=[]
+        self.names=[]
+        
+        self.originalpattern={}
+        self.nb_sources=0
+        self.spatterns={}
+        self.count={}
+        self.packages={}
+        self.REsrcs=[]
+
+    def register(self, v):
+        xx=v.find('~')
+        if xx!=-1:
+            a=v[0:xx]
+            c=v[xx+1:]
+        else:
+            c=v
+            a=v
+        if c in self.spatterns:
+            debug("Skipping %s~%s (pattern already registered)" % (a, c))
+            return
+        idsrc=self.nb_sources
+        debug("register sources[%i]=%s, names[%i]=%s" % (idsrc, c, idsrc, a), level=3)
+        self.spatterns[c]=idsrc
+        xx=c.find('REName:')
+        if xx==0:
+            originalpatternstring=c
+            c=re.compile(c[xx+7:])
+            self.originalpattern[idsrc]=originalpatternstring
+            self.REsrcs.append(idsrc)
+        self.sources.append(c)
+        self.names.append(a)
+        self.nb_sources += 1
+        return idsrc
+
+    def registerInstalled(self):
+        for (sid,name) in [
+            (Sources.PKG_UPGRADABLE, "installed/upgradable"),
+            (Sources.PKG_DOWNGRADABLE, 'installed/downgradable'),
+            (Sources.PKG_UNKNOWN, 'installed/unknown') ]:
+            if len(self.pkgs(sid)) > 0:
+                self.names.append(name)
+                idsrc=self.nb_sources
+                self.nb_sources += 1
+                self.packages[idsrc]=self.packages[sid]
+
+    def __len__(self):
+        return self.nb_sources
+
+    def name(self, idsrc):
+        return self.names[idsrc]
+
+    def pattern(self, idsrc):
+        s=self.sources[idsrc]
+        if type(s)==types.StringType:
+            return s
+        return self.originalpattern[idsrc]
+
+    def get(self, src):
+        return self.spatterns.get(src, None)
+
+    def minREid(self):
+        if len(self.REsrcs) == 0:
+            return None
+        return min(self.REsrcs)
+
+    def getRE(self, name):
+        for idsrc in self.REsrcs:
+            if self.sources[idsrc].match(name):
+                return idsrc
+        return None
+
+    def addPkg(self, idsrc, name, archname):
+        if not (idsrc in self.packages):
+            self.packages[idsrc]={}
+        if not (name in self.packages[idsrc]):
+            self.packages[idsrc][name]={ 'list': [archname] }
+        else:
+            self.packages[idsrc][name]['list'].append(archname)
+        if name == archname:
+            self.packages[idsrc][name]['native']=name
+
+    def pkgs(self, idsrc):
+        return self.packages.get(idsrc, {})
+
+    def pkgname(self, pkg):
+        name=pkg.get('native', pkg['list'][0])
+        nb=len(pkg['list'])
+        if nb > 1:
+            name=("%s(%i)" % (name, nb))
+        return name
+
+    def pkgnames(self, idsrc):
+        return [ self.pkgname(pkg) for pkg in self.pkgs(idsrc).values() ]
+          
+        
+
 def main():
     """The main function"""
-    apt_pkg.init_config()
     try:
         opts, args = getopt.getopt(sys.argv[1:], "".join(shortoptions),
                                    longoptions)
@@ -101,7 +212,10 @@ def main():
                     x=s.find('~')
                     if x!=-1:
                         xsources.append(s)
-                        defsources[s[0:x]]=s
+                        try:
+                            defsources[s[0:x]].append(s)
+                        except KeyError:
+                            defsources[s[0:x]]=[s]
              f.close()
         except IOError:
             True
@@ -130,132 +244,128 @@ def main():
             else:
                 x=a.find('~')
                 if x==-1 and defsources[a]:
-                    xsources.append(defsources[a])
+                    xsources += defsources[a]
                 else:
                     xsources.append(a)
         else:
             assert False, "unhandled option"
+    apt_pkg.init_config()
     apt_pkg.init_system()
-    f = open('/dev/null', 'w')
-    cache=apt_pkg.Cache(apt.progress.text.OpProgress(f))
+    cache=None
+    if loglevel < 1:
+        cache=apt_pkg.Cache(None)
+    else:
+        cache=apt_pkg.Cache()
     depcache=apt_pkg.DepCache(cache)
     apt_pkg.init()
-    origin={}
-    best={}
-    xsources.append('installed~/now/o=/l=/a=')
-    xsources.append('other~REName:.*$')
-    out=len(xsources)
-    count=[]
-    packages=[]
-    sources=[]
-    naming={}
-    originalpattern={}
-    for i in range(out):
-        count.append(0)
-        packages.append([])
-        sources.append(0)
+    srcs = Sources()
     for v in xsources:
-        k=xsources.index(v)
-        xx=v.find('~')
-        if xx!=-1:
-            a=v[0:xx]
-            c=v[xx+1:]
-        else:
-            c=v
-            a=v
-        xx=c.find('REName:')
-        if xx==0:
-            originalpatternstring=c
-            c=re.compile(c[xx+7:])
-            originalpattern[c]=originalpatternstring
-        sources[k]=c
-        naming[c]=a
-    if justlist:
-        heuristic=re.compile(r"(.(org|net|com)$)|(^www.)|(^ftp.[a-z]{2,3}.)|(^ftp.)")
-        for pkg in cache.packages:
-            versions=pkg.version_list
-            for version in versions:
-                if version != None:
-                    for pfile,_ in version.file_list:
-                        cpt=pfile.site+'/'+pfile.archive+'/o='+pfile.origin+'/l='+pfile.label+'/a='+pfile.architecture
-                        alias_heuristic=re.sub(heuristic,'',pfile.site)+'.'+pfile.archive;
-                        if not(cpt in naming):
-                            naming[cpt]=alias_heuristic+":"+pfile.site
-        print "#other and installed are always added by this program"
-        print "#Check that aliases are meaningful enough and UNIQUE"
-        if environfile:
-            print "#order of your .apt-origins was not preserved"
-        print "#other: downloadable packages from unnamed repositories"
-        print "#installed: packages installed but not downloadable"
-        for s in sorted(naming.keys(), key=lambda x: naming[x]):
-            if naming[s]!='installed' and naming[s]!='other':
-                if type(s)==types.StringType:
-                    print naming[s]+'~'+s
-                else:
-                    print naming[s]+'~'+originalpattern[s]
-        sys.exit()
-    for pkg in sorted(cache.packages, key=lambda pkg: pkg.name):
+        srcs.register(v)
+    minREsrc=srcs.minREid()
+    heuristic=re.compile(r"(.(org|net|com)$)|(^www.)|(^ftp.[a-z]{2,3}.)|(^ftp.)")
+    for pkg in cache.packages:
         version=pkg.current_ver
         if version != None and pkg.current_state == apt_pkg.CURSTATE_INSTALLED and (not(onlymanual) or not(depcache.is_auto_installed(pkg))):
-            for pfile,_ in version.file_list:
-                cpt=pfile.site+'/'+pfile.archive+'/o='+pfile.origin+'/l='+pfile.label+'/a='+pfile.architecture
-                if not(cpt in naming):
-                    naming[cpt]=cpt
-                where=-1
-                for cptmatch in sources:
-                    where=where+1
-                    if type(cptmatch)==types.StringType:
-                        if cptmatch==cpt:
-                            break
-                    else:
-                        if cptmatch.match(pkg.name):
-                            break
-                if pkg.name in best:
-                    if best[pkg.name]>where:
-                        best[pkg.name]=where
+            idsource=len(srcs)+1
+            file_list=version.file_list
+            for pfile,_ in file_list:
+                if pfile.index_type == "Debian Package Index":
+                    cpt=pfile.site+'/'+pfile.archive+'/o='+pfile.origin+'/l='+pfile.label+'/a='+pfile.architecture
+                    idsrc=srcs.get(cpt)
+                    if idsrc is not None:
+                        idsource=min(idsource, idsrc)
+            if minREsrc is not None and idsource > minREsrc:
+                # perhaps a regexp would work (if some exist with better priority than currently)
+                idsrc=srcs.getRE(pkg.name)
+                if idsrc is not None:
+                    idsource=min(idsource, idsrc)
+            if idsource < len(srcs):
+                srcs.addPkg(idsource, pkg.name, pkg.get_fullname(True))
+                continue
+
+            # no source found
+            for pfile,_ in file_list:
+                if pfile.index_type == "Debian Package Index":
+                    # we register the first found if there are any
+                    cpt=pfile.site+'/'+pfile.archive+'/o='+pfile.origin+'/l='+pfile.label+'/a='+pfile.architecture
+                    alias_heuristic=re.sub(heuristic,'',pfile.site)+'.'+pfile.archive;
+                    name=alias_heuristic+":"+pfile.site
+                    idsource=srcs.register(name+'~'+cpt)
+                    srcs.addPkg(idsource, pkg.name, pkg.get_fullname(True))
+                    break
+            else:
+                # else the package will go in one installed list
+                dversion = [ v for v in pkg.version_list if v.downloadable ]
+                ver_str = version.ver_str
+                if len(dversion) == 0:
+                    srcs.addPkg(Sources.PKG_UNKNOWN, pkg.name, pkg.get_fullname(True))
+                elif next(( v for v in dversion if apt_pkg.version_compare(ver_str, v.ver_str) < 0), None) is not None:
+                    srcs.addPkg(Sources.PKG_UPGRADABLE, pkg.name, pkg.get_fullname(True))
                 else:
-                    best[pkg.name]=where
-    for s in best.keys():
-        count[best[s]]=1+count[best[s]]
-        packages[best[s]].append(s)
-    if justcount:
-        for k in sources:
-            kk=sources.index(k)
-            if count[kk]>0:
-                print '%s:%d' % (naming[k],count[kk])
+                    srcs.addPkg(Sources.PKG_DOWNGRADABLE, pkg.name, pkg.get_fullname(True))
+    if justlist:
+        #print "#other and installed are always added by this program"
+        print "#installed/(upgradable|downgradable|unknown) are always added by this program"
+        print "#Check that aliases are meaningful enough"
+        #print "#other: downloadable packages from unnamed repositories"
+        print "#installed: packages installed but not downloadable"
+        print "#  /upgradable: new versions are downloadable"
+        print "#  /downgradable: older versions are downloadable (pkg removed from the archive?)"
+        print "#  /unknown: no versions to download (installed with 'dpkg -i'?)"
+        for i in range(len(srcs)):
+            n=srcs.name(i)
+            s=srcs.pattern(i)
+            if len(srcs.pkgs(i)) == 0:
+                print "# no currently matching packages for "+n
+            print n+'~'+s
         sys.exit()
+    srcs.registerInstalled()
+    if justcount:
+        for i in range(len(srcs)):
+            nb=len(srcs.pkgs(i))
+            if (nb > 0):
+                print '%s:%d' % (srcs.name(i), nb)
+        sys.exit()
+    elif optiontabular:
+        for i in range(len(srcs)):
+            name=srcs.name(i)
+            for u in sorted(srcs.pkgnames(i)):
+                print name+':'+u
     else:
-        if optiontabular:
-            for k in sources:
-                kk=sources.index(k)
-                for u in sorted(packages[kk]):
-                    print k+':'+u
-        else:
-            prevname=None
-            for k in sources:
-                new=''
-                kk=sources.index(k)
-                if len(packages[kk])>0:
-                    # if two consecutive sections have the same name, do not display it twice
-                    if prevname != naming[k]:
-                        print ','+("-" * (cols-2))+'.'
-                        print '|'+naming[k].center(cols-2)+'|'
-                        print '`'+("-" * (cols-2))+'\''
-                        prevname=naming[k]
-                if len(packages[kk])<=xlimit:
-                    for u in sorted(packages[kk]):
-                        if len(new)+len(u)+1<=cols:
-                            if new!='':
-                                new=new+' '+u
-                            else:
-                                new=u
-                        else:
-                            print new
-                            new=u
-                    if len(new)>0:
-                        print new
+        prevname=None
+        disp_packages=[]
+        for i in range(len(srcs)):
+            name=srcs.name(i)
+            if len(srcs.pkgs(i))==0:
+                continue
+            # if two consecutive sections have the same name, we merge them
+            if prevname != name:
+                    display_package_list(disp_packages, cols, xlimit)
+                    print ','+("-" * (cols-2))+'.'
+                    print '|'+name.center(cols-2)+'|'
+                    print '`'+("-" * (cols-2))+'\''
+                    prevname=name
+                    disp_packages=[]
+            disp_packages += srcs.pkgnames(i)
+        display_package_list(disp_packages, cols, xlimit)
+
+def display_package_list(packages, cols, xlimit):
+    new=''
+    packages=sorted(set(packages))
+    if len(packages)>xlimit:
+        print 'Too many packages (%d). Use --tabular or --lines=X (x>=%d).' % (len(packages),len(packages))
+    else:
+        for u in sorted(packages):
+            if len(new)+len(u)+1<=cols:
+                if new!='':
+                    new=new+' '+u
                 else:
-                    print 'Too many packages (%d). Use --tabular or --lines=X (x>=%d).' % (len(packages[kk]),len(packages[kk]))
+                    new=u
+            else:
+                print new
+                new=u
+        if len(new)>0:
+            print new
 
 if __name__ == '__main__':
     main() 
