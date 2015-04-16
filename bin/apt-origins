@@ -9,6 +9,8 @@ import re
 import types
 import xdg.BaseDirectory
 import shutil
+import itertools
+from functools import cmp_to_key
 
 parser = argparse.ArgumentParser(description='Display origin of installed packages')
 parser.add_argument('-V', '--version', action='version', version='%(prog)s 2.2')
@@ -76,7 +78,7 @@ class Sources:
         self.packages={}
         self.REsrcs=[]
 
-    def register(self, v):
+    def register(self, v, forceRegister=False):
         xx=v.find('~')
         if xx!=-1:
             a=v[0:xx]
@@ -85,8 +87,12 @@ class Sources:
             c=v
             a=v
         if c in self.spatterns:
-            debug("Skipping %s~%s (pattern already registered)" % (a, c))
-            return
+            if forceRegister:
+                debug("Registering already existing source %s~%s" % (a, c))
+            else:
+                debug("Skipping %s~%s (pattern already registered)" % (a, c))
+                ldjfklj
+                return
         idsrc=self.nb_sources
         debug("register sources[%i]=%s, names[%i]=%s" % (idsrc, c, idsrc, a), level=3)
         self.spatterns[c]=idsrc
@@ -101,10 +107,46 @@ class Sources:
         self.nb_sources += 1
         return idsrc
 
+    heuristic=re.compile(r"(.(org|net|com)$)|(^www.)|(^ftp.[a-z]{2,3}.)|(^ftp.)")
+    def registerFromFileList(self, file_list, forceRegister=False):
+        idsource=None
+        for pfile,_ in file_list:
+            if pfile.index_type == "Debian Package Index":
+                # we register the first found if there are any
+                cpt=pfile.site+'/'+pfile.archive+'/o='+pfile.origin+'/l='+pfile.label+'/a='+pfile.architecture
+                alias_heuristic=re.sub(Sources.heuristic,'',pfile.site)+'.'+pfile.archive;
+                name=alias_heuristic+":"+pfile.site
+                idsource=self.register(name+'~'+cpt, forceRegister=forceRegister)
+                break
+        return idsource
+
     def registerInstalled(self):
+        nb_sources=self.nb_sources
+        for (specialsid,name, up) in [
+            (Sources.PKG_UPGRADABLE, "installed/upgradable", True),
+            (Sources.PKG_DOWNGRADABLE, 'installed/downgradable', False) ]:
+            curStanzaList={}
+            sid=self.nb_sources
+            for oldsid in range(nb_sources):
+                if oldsid in self.originalpattern:
+                    continue
+                sid=self.register(name + " (to " + self.name(oldsid) + ")~"+ self.sources[oldsid], forceRegister=1)
+                curStanzaList[self.sources[oldsid]]=sid
+                sid += 1
+            for pkg in itertools.chain.from_iterable([ grppkg['listpkg'] for grppkg in self.pkgs(specialsid).values() ]):
+                cur_ver = pkg.current_ver
+                if up:
+                    version = min ( [ v for v in pkg.version_list if v.downloadable and cur_ver < v ] )
+                else:
+                    version = max ( [ v for v in pkg.version_list if v.downloadable and cur_ver > v ] )
+                sid = self.getSidFromFileList(version.file_list, stanzaList=curStanzaList)
+                if sid is None:
+                    sid = self.registerFromFileList(version.file_list, forceRegister=True)
+                    self.names[sid] = name + " (to " + self.name(sid) + ")"
+                    curStanzaList[self.sources[sid]]=sid
+                self.addPkg(sid, pkg)
+                
         for (sid,name) in [
-            (Sources.PKG_UPGRADABLE, "installed/upgradable"),
-            (Sources.PKG_DOWNGRADABLE, 'installed/downgradable'),
             (Sources.PKG_UNKNOWN, 'installed/unknown') ]:
             if len(self.pkgs(sid)) > 0:
                 self.names.append(name)
@@ -124,27 +166,45 @@ class Sources:
             return s
         return self.originalpattern[idsrc]
 
-    def get(self, src):
-        return self.spatterns.get(src, None)
+    def getSidFromStanza(self, src, maxSid=None, stanzaList=None):
+        if stanzaList is None:
+            stanzaList = self.spatterns
+        if maxSid is None:
+            return stanzaList.get(src, None)
+        else:
+            return min(maxSid, stanzaList.get(src, maxSid))
+
+    def getSidFromFileList(self, file_list, maxSid=None, stanzaList=None):
+        sid=maxSid
+        for pfile,_ in file_list:
+            if pfile.index_type == "Debian Package Index":
+                cpt=pfile.site+'/'+pfile.archive+'/o='+pfile.origin+'/l='+pfile.label+'/a='+pfile.architecture
+                sid=self.getSidFromStanza(cpt, maxSid=sid, stanzaList=stanzaList)
+        return sid
 
     def minREid(self):
         if len(self.REsrcs) == 0:
             return None
         return min(self.REsrcs)
 
-    def getRE(self, name):
+    def getSidFromRE(self, name, maxSid=None):
         for idsrc in self.REsrcs:
+            if maxSid is not None and idsrc > maxSid:
+                break
             if self.sources[idsrc].match(name):
                 return idsrc
-        return None
+        return maxSid
 
-    def addPkg(self, idsrc, name, archname):
+    def addPkg(self, idsrc, pkg):
+        name=pkg.name
+        archname=pkg.get_fullname(True)
         if not (idsrc in self.packages):
             self.packages[idsrc]={}
         if not (name in self.packages[idsrc]):
-            self.packages[idsrc][name]={ 'list': [archname] }
+            self.packages[idsrc][name]={ 'list': [archname], 'listpkg': [pkg] }
         else:
             self.packages[idsrc][name]['list'].append(archname)
+            self.packages[idsrc][name]['listpkg'].append(pkg)
         if name == archname:
             self.packages[idsrc][name]['native']=name
 
@@ -231,47 +291,27 @@ def main():
     for v in xsources:
         srcs.register(v)
     minREsrc=srcs.minREid()
-    heuristic=re.compile(r"(.(org|net|com)$)|(^www.)|(^ftp.[a-z]{2,3}.)|(^ftp.)")
     for pkg in cache.packages:
         version=pkg.current_ver
         if version != None and pkg.current_state == apt_pkg.CURSTATE_INSTALLED and (not(onlymanual) or not(depcache.is_auto_installed(pkg))):
-            idsource=len(srcs)+1
-            file_list=version.file_list
-            for pfile,_ in file_list:
-                if pfile.index_type == "Debian Package Index":
-                    cpt=pfile.site+'/'+pfile.archive+'/o='+pfile.origin+'/l='+pfile.label+'/a='+pfile.architecture
-                    idsrc=srcs.get(cpt)
-                    if idsrc is not None:
-                        idsource=min(idsource, idsrc)
-            if minREsrc is not None and idsource > minREsrc:
+            idsource=srcs.getSidFromFileList(version.file_list)
+            if minREsrc is not None and (idsource is None or idsource > minREsrc):
                 # perhaps a regexp would work (if some exist with better priority than currently)
-                idsrc=srcs.getRE(pkg.name)
-                if idsrc is not None:
-                    idsource=min(idsource, idsrc)
-            if idsource < len(srcs):
-                srcs.addPkg(idsource, pkg.name, pkg.get_fullname(True))
+                idsource=srcs.getSidFromRE(pkg.name, maxSid=idsource)
+            if idsource is None:
+                # no source found, trying to register one on the fly
+                idsource = srcs.registerFromFileList(version.file_list)
+            if idsource is not None:
+                srcs.addPkg(idsource, pkg)
                 continue
-
-            # no source found
-            for pfile,_ in file_list:
-                if pfile.index_type == "Debian Package Index":
-                    # we register the first found if there are any
-                    cpt=pfile.site+'/'+pfile.archive+'/o='+pfile.origin+'/l='+pfile.label+'/a='+pfile.architecture
-                    alias_heuristic=re.sub(heuristic,'',pfile.site)+'.'+pfile.archive;
-                    name=alias_heuristic+":"+pfile.site
-                    idsource=srcs.register(name+'~'+cpt)
-                    srcs.addPkg(idsource, pkg.name, pkg.get_fullname(True))
-                    break
+            # the package will go in one installed list
+            dversion = [ v for v in pkg.version_list if v.downloadable ]
+            if len(dversion) == 0:
+                srcs.addPkg(Sources.PKG_UNKNOWN, pkg)
+            elif next(( v for v in dversion if version < v), None) is not None:
+                srcs.addPkg(Sources.PKG_UPGRADABLE, pkg)
             else:
-                # else the package will go in one installed list
-                dversion = [ v for v in pkg.version_list if v.downloadable ]
-                ver_str = version.ver_str
-                if len(dversion) == 0:
-                    srcs.addPkg(Sources.PKG_UNKNOWN, pkg.name, pkg.get_fullname(True))
-                elif next(( v for v in dversion if apt_pkg.version_compare(ver_str, v.ver_str) < 0), None) is not None:
-                    srcs.addPkg(Sources.PKG_UPGRADABLE, pkg.name, pkg.get_fullname(True))
-                else:
-                    srcs.addPkg(Sources.PKG_DOWNGRADABLE, pkg.name, pkg.get_fullname(True))
+                srcs.addPkg(Sources.PKG_DOWNGRADABLE, pkg)
     if justlist:
         #print "#other and installed are always added by this program"
         print "#installed/(upgradable|downgradable|unknown) are always added by this program"
@@ -293,13 +333,13 @@ def main():
         for i in range(len(srcs)):
             nb=len(srcs.pkgs(i))
             if (nb > 0):
-                print '%s:%d' % (srcs.name(i), nb)
+                print '%s: %d' % (srcs.name(i), nb)
         sys.exit()
     elif optiontabular:
         for i in range(len(srcs)):
             name=srcs.name(i)
             for u in sorted(srcs.pkgnames(i)):
-                print name+':'+u
+                print name+': '+u
     else:
         prevname=None
         disp_packages=[]
