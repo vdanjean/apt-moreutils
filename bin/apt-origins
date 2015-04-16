@@ -62,9 +62,11 @@ def fix_config_file_location():
             True
 
 class Sources:
-    PKG_UNKNOWN    = -1
-    PKG_UPGRADABLE = -2
-    PKG_DOWNGRADABLE    = -3
+    PKG_UNKNOWN          = -1
+    PKG_AUTOUPGRADABLE   = -2
+    PKG_UPGRADABLE       = -3
+    PKG_AUTODOWNGRADABLE = -4
+    PKG_DOWNGRADABLE     = -5
 
     def __init__(self):
         # Array of sources/names
@@ -120,25 +122,33 @@ class Sources:
                 break
         return idsource
 
-    def registerInstalled(self):
+    def registerInstalled(self, depcache):
         nb_sources=self.nb_sources
-        for (specialsid,name, up) in [
-            (Sources.PKG_UPGRADABLE, "installed/upgradable", True),
-            (Sources.PKG_DOWNGRADABLE, 'installed/downgradable', False) ]:
+        for (specialsid,name, up, auto) in [
+            (Sources.PKG_AUTOUPGRADABLE, 'installed/auto upgradable', True, True),
+            (Sources.PKG_AUTODOWNGRADABLE, 'installed/auto downgradable', False, True),
+            (Sources.PKG_UPGRADABLE, 'installed/manually upgradable', True, False),
+            (Sources.PKG_DOWNGRADABLE, 'installed/manually downgradable', False, False) ]:
             curStanzaList={}
             sid=self.nb_sources
             for oldsid in range(nb_sources):
                 if oldsid in self.originalpattern:
                     continue
-                sid=self.register(name + " (to " + self.name(oldsid) + ")~"+ self.sources[oldsid], forceRegister=1)
+                sid=self.register(name + " to " + self.name(oldsid) + "~"+ self.sources[oldsid], forceRegister=1)
                 curStanzaList[self.sources[oldsid]]=sid
                 sid += 1
             for pkg in itertools.chain.from_iterable([ grppkg['listpkg'] for grppkg in self.pkgs(specialsid).values() ]):
                 cur_ver = pkg.current_ver
-                if up:
-                    version = min ( [ v for v in pkg.version_list if v.downloadable and cur_ver < v ] )
+                version = None
+                if auto:
+                    version = depcache.get_candidate_ver(pkg)
                 else:
-                    version = max ( [ v for v in pkg.version_list if v.downloadable and cur_ver > v ] )
+                    if up:
+                        if version is None or version <= cur_ver:
+                            version = min ( [ v for v in pkg.version_list if v.downloadable and cur_ver < v ] )
+                    else:
+                        if version is None or version >= cur_ver:
+                            version = max ( [ v for v in pkg.version_list if v.downloadable and cur_ver > v ] )
                 sid = self.getSidFromFileList(version.file_list, stanzaList=curStanzaList)
                 if sid is None:
                     sid = self.registerFromFileList(version.file_list, forceRegister=True)
@@ -305,6 +315,13 @@ def main():
                 srcs.addPkg(idsource, pkg)
                 continue
             # the package will go in one installed list
+            target_ver = depcache.get_candidate_ver(pkg)
+            if target_ver is not None and target_ver != version:
+                if target_ver > version:
+                    srcs.addPkg(Sources.PKG_AUTOUPGRADABLE, pkg)
+                else:
+                    srcs.addPkg(Sources.PKG_AUTODOWNGRADABLE, pkg)
+                continue
             dversion = [ v for v in pkg.version_list if v.downloadable ]
             if len(dversion) == 0:
                 srcs.addPkg(Sources.PKG_UNKNOWN, pkg)
@@ -328,7 +345,7 @@ def main():
                 print "# no currently matching packages for "+n
             print n+'~'+s
         sys.exit()
-    srcs.registerInstalled()
+    srcs.registerInstalled(depcache)
     if justcount:
         for i in range(len(srcs)):
             nb=len(srcs.pkgs(i))
