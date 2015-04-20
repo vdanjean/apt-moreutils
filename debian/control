@@ -10,7 +10,7 @@ Homepage: https://github.com/jcdubacq/apt-moreutils
 
 Package: apt-moreutils
 Architecture: all
-Depends: python, python-apt (>= 0.7.93~), ${misc:Depends}
+Depends: python, python-apt (>= 0.8.8~), python-xdg, ${misc:Depends}
 Description: Miscellaneous utilities for package management
  apt-origins checks in the apt sources where a package is downloadable
  from, and assigns each package to an origin. It can then display how many
