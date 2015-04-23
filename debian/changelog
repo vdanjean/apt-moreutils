@@ -1,3 +1,10 @@
+apt-moreutils (2.2~nmu1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Waiting for JC official update...
+
+ -- Vincent Danjean <vdanjean@debian.org>  Mon, 20 Apr 2015 17:05:01 +0200
+
 apt-moreutils (2.1) unstable; urgency=low
 
   * Fix formerly unimplemented option --signal of apt-tree
