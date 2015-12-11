@@ -44,8 +44,12 @@ only the alias will reselect the defined alias if none was given.
 Regexp stanza for package names can be used instead of a mirror.
 Simply use REName:pkgname.*$ for any package named beginning by pkgname).
 .SH NOTES
-Stanza format changed in version 1.7. Just append /a= to the end of your
+Stanza format changed in version 1.7. Just append \fB/a=\fR to the end of your
 existing lines if you upgrade from 1.6.
+.BR
+With recent apt version, the architecture is correcly reported by the APT library.
+So, having \fB/a=\fR at the end of the line will match all architectures but you
+can also select a specific architecture with, for example, \fB/a=amd64\fR.
 .SH FILES
 .TP
 \fB<XDGDIR>/apt\-origins/stanzas.list\fR

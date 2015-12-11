@@ -79,6 +79,8 @@ class Sources:
         self.count={}
         self.packages={}
         self.REsrcs=[]
+        self.findarchpat=re.compile("((.*)/a=)([a-z0-9]+)$")
+        self.spatternsnoarch={}
 
     def register(self, v, forceRegister=False):
         xx=v.find('~')
@@ -93,8 +95,17 @@ class Sources:
                 debug("Registering already existing source %s~%s" % (a, c))
             else:
                 debug("Skipping %s~%s (pattern already registered)" % (a, c))
-                ldjfklj
-                return
+                return #self.spatterns[c]
+        elif c in self.spatternsnoarch:
+            return #self.spatternsnoarch[c]
+        else:
+            havearch=self.findarchpat.match(c)
+            if havearch:
+                c2=havearch.group(1)
+                if c2 in self.spatterns:
+                    debug("forgetting arch %s~%s (pattern without arch registered)" % (a, c))
+                    self.spatternsnoarch[c]=self.spatterns[c2]
+                    return #self.spatterns[c2]
         idsrc=self.nb_sources
         debug("register sources[%i]=%s, names[%i]=%s" % (idsrc, c, idsrc, a), level=3)
         self.spatterns[c]=idsrc
@@ -118,6 +129,8 @@ class Sources:
                 cpt=pfile.site+'/'+pfile.archive+'/o='+pfile.origin+'/l='+pfile.label+'/a='+pfile.architecture
                 alias_heuristic=re.sub(Sources.heuristic,'',pfile.site)+'.'+pfile.archive;
                 name=alias_heuristic+":"+pfile.site
+                if pfile.architecture:
+                    name+=" ["+pfile.architecture+"]"
                 idsource=self.register(name+'~'+cpt, forceRegister=forceRegister)
                 break
         return idsource
@@ -136,7 +149,6 @@ class Sources:
                     continue
                 sid=self.register(name + " to " + self.name(oldsid) + "~"+ self.sources[oldsid], forceRegister=1)
                 curStanzaList[self.sources[oldsid]]=sid
-                sid += 1
             for pkg in itertools.chain.from_iterable([ grppkg['listpkg'] for grppkg in self.pkgs(specialsid).values() ]):
                 cur_ver = pkg.current_ver
                 version = None
@@ -179,10 +191,13 @@ class Sources:
     def getSidFromStanza(self, src, maxSid=None, stanzaList=None):
         if stanzaList is None:
             stanzaList = self.spatterns
+        srcnoarch=self.findarchpat.match(src)
+        if srcnoarch:
+            srcnoarch=srcnoarch.group(1)
         if maxSid is None:
-            return stanzaList.get(src, None)
+            return stanzaList.get(src, stanzaList.get(srcnoarch, None))
         else:
-            return min(maxSid, stanzaList.get(src, maxSid))
+            return min(maxSid, stanzaList.get(src, stanzaList.get(srcnoarch, maxSid)))
 
     def getSidFromFileList(self, file_list, maxSid=None, stanzaList=None):
         sid=maxSid
