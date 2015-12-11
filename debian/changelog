@@ -1,3 +1,10 @@
+apt-moreutils (2.2~nmu2) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Fix architecture handling with new APT
+
+ -- Vincent Danjean <vdanjean@debian.org>  Fri, 11 Dec 2015 13:14:31 +0100
+
 apt-moreutils (2.2~nmu1) unstable; urgency=medium
 
   * Non-maintainer upload.
