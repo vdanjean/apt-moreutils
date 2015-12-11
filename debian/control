@@ -3,7 +3,7 @@ Section: misc
 Priority: optional
 Maintainer: Jean-Christophe Dubacq <jcdubacq1@free.fr>
 Build-depends: debhelper (>= 7.0.50~)
-Standards-Version: 3.9.4
+Standards-Version: 3.9.6
 Vcs-Browser: https://github.com/jcdubacq/apt-moreutils
 Vcs-Git: https://github.com/jcdubacq/apt-moreutils.git
 Homepage: https://github.com/jcdubacq/apt-moreutils
